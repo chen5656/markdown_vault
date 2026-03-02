@@ -3,6 +3,17 @@
 
 'use strict';
 
+// Load media extraction modules (classic service worker — importScripts is synchronous)
+importScripts(
+  'content-router.js',
+  'metadata.js',
+  'vtt-parser.js',
+  'youtube-handler.js',
+  'media-handler.js',
+  'rss-handler.js',
+  'podcast-handler.js',
+);
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TELEGRAM_BASE = 'https://api.telegram.org/bot';
 const ALARM_NAME = 'markdown-vault-poll';
@@ -337,12 +348,17 @@ async function fetchURL(url) {
     }
 
     const contentType = (resp.headers.get('content-type') || '').toLowerCase();
+    const contentDisposition = resp.headers.get('content-disposition') || '';
     const isHTML = contentType.includes('text/html') || contentType.includes('application/xhtml');
+    // Treat XML feed types as text so the RSS handler can parse them
+    const isXmlFeed = contentType.includes('application/rss+xml') ||
+      contentType.includes('application/atom+xml') ||
+      contentType.includes('application/xml');
 
-    // Non-HTML, non-text content (PDF, image, etc.) — return as binary for direct file save
-    if (!isHTML && !contentType.includes('text/')) {
+    // Non-HTML, non-text content (PDF, image, audio, video) — return as binary for handler dispatch
+    if (!isHTML && !isXmlFeed && !contentType.includes('text/')) {
       const buffer = await resp.arrayBuffer();
-      return { html: null, finalUrl: resp.url, contentType, binaryData: buffer };
+      return { html: null, finalUrl: resp.url, contentType, contentDisposition, binaryData: buffer };
     }
 
     const html = await resp.text();
@@ -351,6 +367,7 @@ async function fetchURL(url) {
       html: html.length > MAX_PAGE_SIZE ? html.slice(0, MAX_PAGE_SIZE) : html,
       finalUrl: resp.url,
       contentType,
+      contentDisposition,
     };
   } catch (e) {
     clearTimeout(timer);
@@ -1054,6 +1071,16 @@ async function getSettings() {
   ]);
 }
 
+// ─── Notification + save helpers (shared by all handlers) ────────────────────
+async function notifyAndRecord(title, filename, url, savedAt) {
+  chrome.notifications.create({
+    type: 'basic', iconUrl: 'docs/icon_64.png',
+    title: 'Saved as Markdown',
+    message: `"${title.slice(0, 60)}" → ${filename}`,
+  });
+  await addRecentSave({ title, filename, url, saved_at: savedAt });
+}
+
 // ─── URL Processing ───────────────────────────────────────────────────────────
 async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
   const dirHandle = await getDirHandle();
@@ -1066,10 +1093,20 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
   const savedAt = new Date().toISOString();
 
   try {
+    // ── Pre-fetch routing: YouTube (does its own fetch) ──────────────────────
+    const preType = classifyUrl(url);
+    if (preType === 'youtube') {
+      console.log('[markdown-vault] YouTube detected:', url);
+      const result = await handleYouTube(url, dirHandle, settings);
+      await notifyAndRecord(result.title, result.filename, url, savedAt);
+      await clearPendingRetry(url);
+      return;
+    }
+
     // Step 1: Fetch the page
-    let html, finalUrl, binaryData, contentType;
+    let html, finalUrl, binaryData, contentType, contentDisposition;
     try {
-      ({ html, finalUrl, binaryData, contentType } = await fetchURL(url));
+      ({ html, finalUrl, binaryData, contentType, contentDisposition } = await fetchURL(url));
     } catch (fetchErr) {
       const isRetryable = fetchErr.retryable;
       const status = fetchErr.status;
@@ -1112,8 +1149,54 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
       return;
     }
 
-    // Step 1b: If content is a binary file (PDF, image, etc.), save directly
+    // Step 1b: Route based on content type (binary or XML)
+    const effectiveUrl = finalUrl || url;
+    const postType = classifyUrl(effectiveUrl, contentType);
+
+    // RSS feeds (returned as text/html via fetchURL after our XML content-type fix)
+    if (postType === 'rss' || (html && (contentType || '').match(/rss|atom|feed/))) {
+      console.log('[markdown-vault] RSS feed detected:', effectiveUrl);
+      const result = await handleRss(effectiveUrl, dirHandle, settings, html);
+      await notifyAndRecord(result.title, result.filename, url, savedAt);
+      await clearPendingRetry(url);
+      return;
+    }
+
     if (binaryData) {
+      const fetchResult = { binaryData, contentType, contentDisposition };
+
+      if (postType === 'pdf') {
+        console.log('[markdown-vault] PDF detected:', effectiveUrl);
+        const result = await handlePdf(effectiveUrl, dirHandle, settings, fetchResult);
+        await notifyAndRecord(result.title, result.filename, url, savedAt);
+        await clearPendingRetry(url);
+        return;
+      }
+
+      if (postType === 'direct-audio') {
+        console.log('[markdown-vault] Audio file detected:', effectiveUrl);
+        const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'audio');
+        await notifyAndRecord(result.title, result.filename, url, savedAt);
+        await clearPendingRetry(url);
+        return;
+      }
+
+      if (postType === 'direct-video') {
+        console.log('[markdown-vault] Video file detected:', effectiveUrl);
+        const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'video');
+        await notifyAndRecord(result.title, result.filename, url, savedAt);
+        await clearPendingRetry(url);
+        return;
+      }
+
+      if (postType === 'direct-image') {
+        console.log('[markdown-vault] Image URL detected:', effectiveUrl);
+        const result = await handleDirectImage(effectiveUrl, dirHandle, settings, fetchResult);
+        await clearPendingRetry(url);
+        return;
+      }
+
+      // Unknown binary — generic file save (original behaviour)
       let ext = 'bin';
       if (contentType) {
         const ctParts = contentType.split('/');
@@ -1140,6 +1223,15 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
         message: `Downloaded: ${fh.name}`,
       });
       await addRecentSave({ title: fh.name, filename: fh.name, url, saved_at: savedAt });
+      await clearPendingRetry(url);
+      return;
+    }
+
+    // Podcast pages: handle before generic HTML parsing
+    if (postType === 'podcast') {
+      console.log('[markdown-vault] Podcast page detected:', effectiveUrl);
+      const result = await handlePodcast(effectiveUrl, html, dirHandle, settings);
+      await notifyAndRecord(result.title, result.filename, url, savedAt);
       await clearPendingRetry(url);
       return;
     }
