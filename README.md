@@ -33,7 +33,7 @@ cd save-as-md
 
 1. Open `chrome://extensions` in Chrome
 2. Enable **Developer mode** (top-right toggle)
-3. Click **Load unpacked** → select the `save-as-md` folder
+3. Click **Load unpacked** → select the `src` folder
 4. Click the extension icon → **Start Setup**
 5. Paste your Telegram bot token and pick a local save folder
 

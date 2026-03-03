@@ -7,7 +7,7 @@
 ```bash
 # No install step — load the unpacked extension directly
 # 1. Open chrome://extensions, enable Developer mode
-# 2. Click "Load unpacked" → select the repo root folder
+# 2. Click "Load unpacked" → select the `src` folder
 # 3. Click extension icon → "Start Setup" → paste Telegram bot token → choose save folder
 ```
 
