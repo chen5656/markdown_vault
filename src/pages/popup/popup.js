@@ -380,7 +380,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Text: URLs or plain text
     const text = e.clipboardData.getData('text').trim();
-    const urls = text.split(/[\n\r]+/).map(l => l.trim()).filter(l => /^https?:\/\/[^\s]+/.test(l));
+    const normalizeURL = t => /^https?:\/\//i.test(t) ? t : (/^(?:www\.)?(?:x|twitter)\.com\//i.test(t) ? 'https://' + t : t);
+    const urls = text.split(/[\n\r]+/).map(l => normalizeURL(l.trim())).filter(l => /^https?:\/\/[^\s]+/.test(l));
     if (urls.length > 0) {
       e.preventDefault();
       urls.reduce((chain, url) => chain.then(() => handlePastedURL(url)), Promise.resolve());

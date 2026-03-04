@@ -126,8 +126,16 @@ function extractURLsFromMessage(message) {
   return [...new Set(urls)];
 }
 
+function normalizeURL(text) {
+  const t = text.trim();
+  if (/^https?:\/\//i.test(t)) return t;
+  // Accept bare hostnames like x.com/... twitter.com/... etc.
+  if (/^(?:www\.)?(?:x|twitter)\.com\//i.test(t)) return 'https://' + t;
+  return t;
+}
+
 function isURL(text) {
-  return /^https?:\/\/[^\s]+/.test(text.trim());
+  return /^https?:\/\/[^\s]+/.test(normalizeURL(text));
 }
 
 function isTwitterHostname(hostname) {

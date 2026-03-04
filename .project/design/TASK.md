@@ -12,25 +12,3 @@
 [x]         <div id="paste-label" class="paste-label">Paste a URL to save it</div>, here add function, so user can paste a url, or paste a screenshot image in clipboard, or paste a text.
 [x] we just tried this url, https://x.com/pirrer/status/2028477493993488504, it is x, and when open, it opens an article, but my code can't extract it. fix it.
 
-
-/// not working
-
-
-  What was happening:
-  1. Tab opens at x.com/pirrer/status/...
-  2. X's SPA renders the tweet — body is just https://t.co/1pnK0PqBtU
-  3. Tweet extraction found div[data-testid="tweetText"] with the t.co URL as text → text = "https://t.co/1pnK0PqBtU"
-  4. contentMarkdown = author metadata + URL → non-empty → returned as the "article" content
-  5. Saved: just author info + bare URL ← the bug
-
-  What happens now:
-  1. Tweet extraction runs the same way, gets text = "https://t.co/1pnK0PqBtU"
-  2. New check: textWithoutUrls = "", no images, no external links → returns null
-  3. Falls through to note extraction
-  4. Note extraction checks window.location.pathname in the tab — if X's SPA navigated to /i/article/..., tries [data-testid="article"], [role="article"], article, main → returns
-  article text
-  5. If still on status URL, Readability runs on the live DOM (which now has the article card loaded), then CSS selector fallback → main / article picks up content
-
-
-
-///
