@@ -1106,16 +1106,9 @@ async function getDirHandle() {
   const handle = await idbGet('save_dir_handle');
   if (!handle) return null;
 
-  const perm = await handle.queryPermission({ mode: 'readwrite' });
-  if (perm !== 'granted') {
-    // Can't requestPermission() from service worker — signal popup
-    await setStorage({ fs_permission_needed: true, folder_status: 'permission_needed' });
-    await updateBadge();
-    return null;
-  }
-
-  // Verify the folder still exists on disk — the handle can be permission-granted
-  // but the underlying directory may have been deleted by the user.
+  // Skip queryPermission() — it returns 'prompt' after service worker restarts
+  // even when the permission is still valid. Instead, try a real directory read
+  // which is the ground truth for whether access actually works.
   try {
     const iter = handle.values();
     await iter.next();
@@ -1128,6 +1121,12 @@ async function getDirHandle() {
         title: 'Markdown Vault — Save Folder Missing',
         message: 'Your save folder no longer exists. Open Settings and select a new folder.',
       });
+      return null;
+    }
+    if (e.name === 'NotAllowedError' || e.name === 'SecurityError') {
+      // Can't requestPermission() from service worker — signal popup
+      await setStorage({ fs_permission_needed: true, folder_status: 'permission_needed' });
+      await updateBadge();
       return null;
     }
     throw e;

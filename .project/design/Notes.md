@@ -1,0 +1,1 @@
+another way to fetch the x content and artical https://r.jina.ai/https://x.com/xionghuanwei/status/2028714699047518231
