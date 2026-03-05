@@ -4,9 +4,14 @@
 
 'use strict';
 
+import {
+  sanitizeTitle, sanitizeUrlForDisplay, buildFrontmatter,
+  escapeMarkdownHeading, buildFilename, saveMarkdownFile, offscreenMessage,
+} from './shared-utils.js';
+
 const RSS_MAX_ITEMS = 50;
 
-async function handleRss(url, dirHandle, settings, xmlText) {
+export async function handleRss(url, dirHandle, settings, xmlText) {
   const { include_frontmatter = true, file_naming_pattern } = settings;
   const savedAt = new Date().toISOString();
 

@@ -41,7 +41,7 @@ function isYouTubeVideoUrl(url) {
   } catch { return false; }
 }
 
-function extractYouTubeVideoId(url) {
+export function extractYouTubeVideoId(url) {
   try {
     const u = new URL(url);
     const hostname = u.hostname.toLowerCase();
@@ -84,7 +84,7 @@ function isRssContentType(ct) {
  * Returns: 'youtube' | 'direct-video' | 'direct-audio' | 'direct-image'
  *        | 'pdf' | 'rss' | 'podcast' | 'html'
  */
-function classifyUrl(url, contentType) {
+export function classifyUrl(url, contentType) {
   // 1. YouTube video URLs
   if (isYouTubeVideoUrl(url)) return 'youtube';
 

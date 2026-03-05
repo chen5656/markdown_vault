@@ -1,18 +1,17 @@
-// Markdown Vault — Background Service Worker
+// Markdown Vault — Background Service Worker (ES module)
 // Polls your Telegram bot and saves URLs as local Markdown files.
 
 'use strict';
 
-// Load media extraction modules (classic service worker — importScripts is synchronous)
-importScripts(
-  'content-router.js',
-  'metadata.js',
-  'vtt-parser.js',
-  'youtube-handler.js',
-  'media-handler.js',
-  'rss-handler.js',
-  'podcast-handler.js',
-);
+// Static imports — always needed at startup for URL classification
+import { classifyUrl } from './content-router.js';
+import {
+  sanitizeTitle, sanitizeUrlForDisplay, slugify, dateString, localIsoString,
+  buildFrontmatter, escapeMarkdownHeading, buildFilename,
+  writeFile, readFile, getUniqueFileHandle, saveMarkdownFile,
+  appendToDaily, saveImageToFolder,
+  parseHtmlViaOffscreen, convertHtmlToMarkdown,
+} from './shared-utils.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const TELEGRAM_BASE = 'https://api.telegram.org/bot';
@@ -23,15 +22,6 @@ const RETRY_DELAYS = [30, 120, 300]; // seconds between attempts
 const DISCONNECT_THRESHOLD = 24 * 60 * 60 * 1000; // 24h in ms
 const MIN_ARTICLE_LENGTH = 500; // chars; below this, use background tab fallback
 const MAX_PAGE_SIZE = 5 * 1024 * 1024; // 5MB max for text page fetch
-const SESSION_MAX_TRACKED_CHATS = 50;
-const ACK_DEDUPE_MAX_KEYS = 500;
-const ACK_DEDUPE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
-const SESSION_CHAT_COUNTERS_KEY = 'session_chat_save_counts';
-const SESSION_ACK_DEDUPE_KEY = 'session_ack_dedupe';
-const _sessionFallback = {
-  [SESSION_CHAT_COUNTERS_KEY]: {},
-  [SESSION_ACK_DEDUPE_KEY]: {},
-};
 
 // ─── IndexedDB (for FileSystemDirectoryHandle) ────────────────────────────────
 function openDB() {
@@ -72,35 +62,6 @@ async function setStorage(obj) {
   return chrome.storage.local.set(obj);
 }
 
-function getSessionStorageArea() {
-  return chrome.storage.session || null;
-}
-
-async function getSessionState(key) {
-  const area = getSessionStorageArea();
-  if (!area) return _sessionFallback[key] || {};
-
-  try {
-    const data = await area.get([key]);
-    return data[key] || {};
-  } catch (err) {
-    console.warn('[markdown-vault] session storage read failed:', err);
-    return _sessionFallback[key] || {};
-  }
-}
-
-async function setSessionState(key, value) {
-  _sessionFallback[key] = value;
-  const area = getSessionStorageArea();
-  if (!area) return;
-
-  try {
-    await area.set({ [key]: value });
-  } catch (err) {
-    console.warn('[markdown-vault] session storage write failed:', err);
-  }
-}
-
 // ─── Telegram API ─────────────────────────────────────────────────────────────
 async function telegramCall(token, method, params = {}) {
   const resp = await fetch(`${TELEGRAM_BASE}${token}/${method}`, {
@@ -139,89 +100,6 @@ async function getUpdates(token, offset) {
 
 async function getTelegramFileInfo(token, fileId) {
   return telegramCall(token, 'getFile', { file_id: fileId });
-}
-
-async function sendTelegramMessage(token, chatId, text, replyToMessageId) {
-  const params = {
-    chat_id: chatId,
-    text,
-    disable_web_page_preview: true,
-  };
-  if (replyToMessageId !== undefined && replyToMessageId !== null) {
-    params.reply_to_message_id = replyToMessageId;
-  }
-  return telegramCall(token, 'sendMessage', params);
-}
-
-async function incrementSessionSaveCount(chatId) {
-  const chatKey = String(chatId);
-  const now = Date.now();
-  const counters = await getSessionState(SESSION_CHAT_COUNTERS_KEY);
-
-  const current = counters[chatKey]?.count || 0;
-  counters[chatKey] = { count: current + 1, touchedAt: now };
-
-  const entries = Object.entries(counters);
-  if (entries.length > SESSION_MAX_TRACKED_CHATS) {
-    entries.sort((a, b) => (a[1]?.touchedAt || 0) - (b[1]?.touchedAt || 0));
-    const over = entries.length - SESSION_MAX_TRACKED_CHATS;
-    for (let i = 0; i < over; i++) {
-      delete counters[entries[i][0]];
-    }
-  }
-
-  await setSessionState(SESSION_CHAT_COUNTERS_KEY, counters);
-  return counters[chatKey].count;
-}
-
-async function isSaveAckDuplicate(dedupeKey) {
-  const now = Date.now();
-  const dedupe = await getSessionState(SESSION_ACK_DEDUPE_KEY);
-  let changed = false;
-
-  for (const [key, ts] of Object.entries(dedupe)) {
-    if (!ts || now - ts > ACK_DEDUPE_TTL_MS) {
-      delete dedupe[key];
-      changed = true;
-    }
-  }
-
-  if (dedupe[dedupeKey]) {
-    if (changed) await setSessionState(SESSION_ACK_DEDUPE_KEY, dedupe);
-    return true;
-  }
-
-  dedupe[dedupeKey] = now;
-  const entries = Object.entries(dedupe);
-  if (entries.length > ACK_DEDUPE_MAX_KEYS) {
-    entries.sort((a, b) => (a[1] || 0) - (b[1] || 0));
-    const over = entries.length - ACK_DEDUPE_MAX_KEYS;
-    for (let i = 0; i < over; i++) {
-      delete dedupe[entries[i][0]];
-    }
-  }
-
-  await setSessionState(SESSION_ACK_DEDUPE_KEY, dedupe);
-  return false;
-}
-
-async function maybeSendSaveAck({ token, messageCtx, sendSaveAck, savedLabel }) {
-  if (!sendSaveAck || !token || !messageCtx) return;
-  if (messageCtx.source !== 'telegram') return;
-  if (messageCtx.chat_id === undefined || messageCtx.update_id === undefined) return;
-
-  const dedupeKey = `${messageCtx.chat_id}:${messageCtx.update_id}:${savedLabel || 'saved'}`;
-  const duplicate = await isSaveAckDuplicate(dedupeKey);
-  if (duplicate) return;
-
-  const sessionCount = await incrementSessionSaveCount(messageCtx.chat_id);
-  const ackText = `✅ Saved\n📊 Session saved count: ${sessionCount}`;
-
-  try {
-    await sendTelegramMessage(token, messageCtx.chat_id, ackText, messageCtx.message_id);
-  } catch (err) {
-    console.warn('[markdown-vault] Failed to send save ack:', err);
-  }
 }
 
 // ─── URL Detection ────────────────────────────────────────────────────────────
@@ -293,36 +171,6 @@ function isXiaohongshuURL(input) {
     return host === 'xiaohongshu.com' || host === 'xhslink.com';
   } catch {
     return false;
-  }
-}
-
-// ─── Sanitization Helpers ────────────────────────────────────────────────────
-function sanitizeUrlForDisplay(url) {
-  try {
-    const u = new URL(url);
-    if (u.username || u.password) {
-      u.username = '***';
-      u.password = '***';
-    }
-    return u.toString();
-  } catch { return url; }
-}
-
-function sanitizeTitle(title) {
-  return (title || '')
-    .replace(/[\r\n]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function buildFilename(title, pattern, date) {
-  const slug = slugify(title);
-  const d = date || dateString();
-  switch (pattern) {
-    case 'slug-YYYY-MM-DD': return `${slug}-${d}.md`;
-    case 'slug': return `${slug}.md`;
-    case 'YYYY-MM-DD-slug':
-    default: return `${d}-${slug}.md`;
   }
 }
 
@@ -403,60 +251,6 @@ async function fetchTweetViaOEmbed(url) {
     console.warn('[markdown-vault] oEmbed fallback failed:', e);
     return null;
   }
-}
-
-// ─── Offscreen Document ───────────────────────────────────────────────────────
-async function ensureOffscreen() {
-  // hasDocument() added in Chrome 116
-  if (typeof chrome.offscreen.hasDocument === 'function') {
-    const has = await chrome.offscreen.hasDocument();
-    if (has) return;
-  }
-
-  try {
-    await chrome.offscreen.createDocument({
-      url: 'pages/offscreen/offscreen.html',
-      reasons: ['DOM_PARSER'],
-      justification: 'Parse HTML with Readability for article extraction',
-    });
-  } catch (e) {
-    // Ignore "already exists" errors
-    if (!e.message?.includes('single offscreen') && !e.message?.includes('already')) {
-      throw e;
-    }
-  }
-}
-
-async function offscreenMessage(payload) {
-  await ensureOffscreen();
-
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Offscreen timeout')), 30000);
-
-    chrome.runtime.sendMessage(
-      { target: 'offscreen', ...payload },
-      response => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else if (response?.success) {
-          resolve(response);
-        } else {
-          reject(new Error(response?.error || 'Offscreen operation failed'));
-        }
-      }
-    );
-  });
-}
-
-// Parse full page HTML: run Readability + Turndown
-async function parseHtmlViaOffscreen(html, url, useGFM) {
-  return offscreenMessage({ type: 'parse_html', html, url, useGFM });
-}
-
-// Convert already-extracted article HTML to Markdown (skip Readability)
-async function convertHtmlToMarkdown(title, html, url, useGFM) {
-  return offscreenMessage({ type: 'convert_html', title, html, url, useGFM });
 }
 
 // ─── Content Fetch ────────────────────────────────────────────────────────────
@@ -677,64 +471,21 @@ async function fetchWithBackgroundTab(url) {
       }
     }
 
-    // Inject Readability
+    // Inject Readability + extract content — runs in page context, not SW
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['libs/Readability.js'],
     });
-
-    // Extract content from live DOM
-    const results = await chrome.scripting.executeScript({
+    await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: () => {
-        try {
-          const reader = new Readability(document.cloneNode(true));
-          const article = reader.parse();
-          if (!article) return null;
-          return {
-            title: article.title,
-            content: article.content,
-            excerpt: article.excerpt,
-            byline: article.byline,
-            siteName: article.siteName,
-          };
-        } catch (e) {
-          return null;
-        }
-      },
+      files: ['readability-extractor.js'],
+    });
+    const readabilityResults = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => window.__mvReadabilityResult,
     });
 
-    const readabilityResult = results[0]?.result || null;
-    if (readabilityResult) return readabilityResult;
-
-    // Readability fallback: try common article selectors for JS-heavy sites
-    // (e.g. Next.js/React apps where Readability can't find article structure)
-    const selectorResults = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: () => {
-        const candidates = [
-          'main article',
-          'article',
-          '[role="main"] article',
-          '[role="main"]',
-          '.post-content',
-          '.article-content',
-          '.entry-content',
-          '.prose',
-          '.content',
-          'main',
-        ];
-        for (const sel of candidates) {
-          const el = document.querySelector(sel);
-          if (el && el.textContent.trim().length > 200) {
-            return { title: document.title, content: el.innerHTML };
-          }
-        }
-        return null;
-      },
-    });
-
-    return selectorResults[0]?.result || null;
+    return readabilityResults[0]?.result || null;
   } finally {
     await chrome.tabs.remove(tab.id).catch(() => { });
   }
@@ -776,119 +527,6 @@ async function getDirHandle() {
   return handle;
 }
 
-function slugify(text, maxLen = 60) {
-  return (text || 'untitled')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '') // Keep unicode letters & numbers (CJK, etc.)
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, maxLen) || 'untitled';
-}
-
-function pad2(num) {
-  return String(num).padStart(2, '0');
-}
-
-function dateString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = pad2(date.getMonth() + 1);
-  const day = pad2(date.getDate());
-  return `${year}-${month}-${day}`;
-}
-
-function localIsoString(date = new Date()) {
-  const year = date.getFullYear();
-  const month = pad2(date.getMonth() + 1);
-  const day = pad2(date.getDate());
-  const hours = pad2(date.getHours());
-  const minutes = pad2(date.getMinutes());
-  const seconds = pad2(date.getSeconds());
-
-  const tzOffsetMins = -date.getTimezoneOffset();
-  const tzSign = tzOffsetMins >= 0 ? '+' : '-';
-  const tzAbs = Math.abs(tzOffsetMins);
-  const tzHours = pad2(Math.floor(tzAbs / 60));
-  const tzMinutes = pad2(tzAbs % 60);
-
-  return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}${tzSign}${tzHours}:${tzMinutes}`;
-}
-
-async function getUniqueFileHandle(dirHandle, filename) {
-  const ext = filename.endsWith('.md') ? '.md' : '';
-  const base = ext ? filename.slice(0, -3) : filename;
-
-  // Try base name first
-  try {
-    await dirHandle.getFileHandle(filename, { create: false });
-    // File exists — try numbered variants
-    for (let i = 2; i <= 99; i++) {
-      const candidate = `${base}-${i}${ext}`;
-      try {
-        await dirHandle.getFileHandle(candidate, { create: false });
-      } catch {
-        return dirHandle.getFileHandle(candidate, { create: true });
-      }
-    }
-  } catch {
-    // File doesn't exist — use original name
-    return dirHandle.getFileHandle(filename, { create: true });
-  }
-
-  return dirHandle.getFileHandle(`${base}-${Date.now()}${ext}`, { create: true });
-}
-
-async function writeFile(fileHandle, content) {
-  const writable = await fileHandle.createWritable();
-  await writable.write(content);
-  await writable.close();
-}
-
-async function readFile(fileHandle) {
-  const file = await fileHandle.getFile();
-  return file.text();
-}
-
-async function saveMarkdownFile(dirHandle, filename, content) {
-  const fileHandle = await getUniqueFileHandle(dirHandle, filename);
-  await writeFile(fileHandle, content);
-  return fileHandle.name;
-}
-
-async function appendToDaily(dirHandle, content, date) {
-  const filename = `${date}.md`;
-  let existing = '';
-
-  try {
-    const fh = await dirHandle.getFileHandle(filename, { create: false });
-    existing = await readFile(fh);
-  } catch {
-    // File doesn't exist yet
-  }
-
-  const separator = existing ? '\n\n---\n\n' : '';
-  const newContent = existing + separator + content;
-
-  const fh = await dirHandle.getFileHandle(filename, { create: true });
-  await writeFile(fh, newContent);
-}
-
-async function saveImageToFolder(dirHandle, date, filename, arrayBuffer) {
-  // Create date subfolder
-  let dayDir;
-  try {
-    dayDir = await dirHandle.getDirectoryHandle(date, { create: true });
-  } catch {
-    dayDir = dirHandle; // fallback: save in root
-  }
-
-  const fh = await dayDir.getFileHandle(filename, { create: true });
-  const writable = await fh.createWritable();
-  await writable.write(arrayBuffer);
-  await writable.close();
-  return `${date}/${filename}`;
-}
-
 // Download a list of image URLs into a named subfolder; returns array of saved filenames (null on failure)
 async function downloadImagesToFolder(dirHandle, folderName, imageUrls) {
   let subDir;
@@ -903,13 +541,12 @@ async function downloadImagesToFolder(dirHandle, folderName, imageUrls) {
   for (let i = 0; i < imageUrls.length; i++) {
     const remoteUrl = imageUrls[i];
     try {
-      const resp = await fetch(remoteUrl);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const buffer = await resp.arrayBuffer();
+      const { fetchFirstWorkingImage } = await import('./image-downloader.js');
+      const { buffer, contentType, usedUrl } = await fetchFirstWorkingImage(remoteUrl);
 
       // Derive extension from Content-Type header, fallback to URL path
       let ext = 'jpg';
-      const imgContentType = (resp.headers.get('content-type') || '').split(';')[0].trim();
+      const imgContentType = (contentType || '').trim();
       if (imgContentType.startsWith('image/')) {
         const ctExt = imgContentType.split('/')[1];
         if (ctExt === 'jpeg') ext = 'jpg';
@@ -917,7 +554,7 @@ async function downloadImagesToFolder(dirHandle, folderName, imageUrls) {
         else if (ctExt) ext = ctExt;
       } else {
         try {
-          const urlPath = new URL(remoteUrl).pathname;
+          const urlPath = new URL(usedUrl || remoteUrl).pathname;
           const parts = urlPath.split('.');
           if (parts.length > 1) ext = parts.pop().split('?')[0].toLowerCase() || 'jpg';
         } catch { /* use default */ }
@@ -935,30 +572,6 @@ async function downloadImagesToFolder(dirHandle, folderName, imageUrls) {
     }
   }
   return paths;
-}
-
-// ─── Markdown Building ────────────────────────────────────────────────────────
-function buildFrontmatter(fields) {
-  const lines = ['---'];
-  for (const [k, v] of Object.entries(fields)) {
-    if (typeof v === 'string') {
-      const escaped = v
-        .replace(/\\/g, '\\\\')
-        .replace(/"/g, '\\"')
-        .replace(/\n/g, '\\n')
-        .replace(/\r/g, '');
-      lines.push(`${k}: "${escaped}"`);
-    } else {
-      lines.push(`${k}: ${v}`);
-    }
-  }
-  lines.push('---', '');
-  return lines.join('\n');
-}
-
-function escapeMarkdownHeading(text) {
-  // Escape chars that could create unintended markdown formatting in a heading line
-  return (text || '').replace(/([\\`*_{}[\]()#+\-.!|~>])/g, '\\$&');
 }
 
 function buildArticleMarkdown({ title, url, savedAt, markdown, includeFrontmatter }) {
@@ -1149,11 +762,13 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
   const { bot_token, include_frontmatter = true, use_gfm = true, send_save_ack = false } = settings;
   const urlAckLabel = `url:${url}`;
   const maybeAckForUrlSave = async () => {
+    const { maybeSendSaveAck } = await import('./telegram-ack.js');
     await maybeSendSaveAck({
       token: bot_token,
       messageCtx,
       sendSaveAck: send_save_ack,
       savedLabel: urlAckLabel,
+      telegramCall,
     });
   };
   const savedAt = localIsoString();
@@ -1163,6 +778,7 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
     const preType = classifyUrl(url);
     if (preType === 'youtube') {
       console.log('[markdown-vault] YouTube detected:', url);
+      const { handleYouTube } = await import('./youtube-handler.js');
       const result = await handleYouTube(url, dirHandle, settings);
       await notifyAndRecord(result.title, result.filename, url, savedAt);
       await maybeAckForUrlSave();
@@ -1223,6 +839,7 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
     // RSS feeds (returned as text/html via fetchURL after our XML content-type fix)
     if (postType === 'rss' || (html && (contentType || '').match(/rss|atom|feed/))) {
       console.log('[markdown-vault] RSS feed detected:', effectiveUrl);
+      const { handleRss } = await import('./rss-handler.js');
       const result = await handleRss(effectiveUrl, dirHandle, settings, html);
       await notifyAndRecord(result.title, result.filename, url, savedAt);
       await maybeAckForUrlSave();
@@ -1233,34 +850,37 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
     if (binaryData) {
       const fetchResult = { binaryData, contentType, contentDisposition };
 
-      if (postType === 'pdf') {
-        console.log('[markdown-vault] PDF detected:', effectiveUrl);
-        const result = await handlePdf(effectiveUrl, dirHandle, settings, fetchResult);
-        await notifyAndRecord(result.title, result.filename, url, savedAt);
-        await maybeAckForUrlSave();
-        await clearPendingRetry(url);
-        return;
-      }
+      if (postType === 'pdf' || postType === 'direct-audio' || postType === 'direct-video' || postType === 'direct-image') {
+        const { handlePdf, handleDirectMedia, handleDirectImage } = await import('./media-handler.js');
 
-      if (postType === 'direct-audio') {
-        console.log('[markdown-vault] Audio file detected:', effectiveUrl);
-        const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'audio');
-        await notifyAndRecord(result.title, result.filename, url, savedAt);
-        await maybeAckForUrlSave();
-        await clearPendingRetry(url);
-        return;
-      }
+        if (postType === 'pdf') {
+          console.log('[markdown-vault] PDF detected:', effectiveUrl);
+          const result = await handlePdf(effectiveUrl, dirHandle, settings, fetchResult);
+          await notifyAndRecord(result.title, result.filename, url, savedAt);
+          await maybeAckForUrlSave();
+          await clearPendingRetry(url);
+          return;
+        }
 
-      if (postType === 'direct-video') {
-        console.log('[markdown-vault] Video file detected:', effectiveUrl);
-        const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'video');
-        await notifyAndRecord(result.title, result.filename, url, savedAt);
-        await maybeAckForUrlSave();
-        await clearPendingRetry(url);
-        return;
-      }
+        if (postType === 'direct-audio') {
+          console.log('[markdown-vault] Audio file detected:', effectiveUrl);
+          const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'audio');
+          await notifyAndRecord(result.title, result.filename, url, savedAt);
+          await maybeAckForUrlSave();
+          await clearPendingRetry(url);
+          return;
+        }
 
-      if (postType === 'direct-image') {
+        if (postType === 'direct-video') {
+          console.log('[markdown-vault] Video file detected:', effectiveUrl);
+          const result = await handleDirectMedia(effectiveUrl, dirHandle, settings, fetchResult, 'video');
+          await notifyAndRecord(result.title, result.filename, url, savedAt);
+          await maybeAckForUrlSave();
+          await clearPendingRetry(url);
+          return;
+        }
+
+        // direct-image
         console.log('[markdown-vault] Image URL detected:', effectiveUrl);
         const result = await handleDirectImage(effectiveUrl, dirHandle, settings, fetchResult);
         if (result?.saved !== false) {
@@ -1336,6 +956,7 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
     // Podcast pages: handle before generic HTML parsing
     if (postType === 'podcast') {
       console.log('[markdown-vault] Podcast page detected:', effectiveUrl);
+      const { handlePodcast } = await import('./podcast-handler.js');
       const result = await handlePodcast(effectiveUrl, html, dirHandle, settings);
       await notifyAndRecord(result.title, result.filename, url, savedAt);
       await maybeAckForUrlSave();
@@ -1445,7 +1066,7 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
     const fileHandle = await getUniqueFileHandle(dirHandle, mdFilename);
     const savedName = fileHandle.name;
 
-    // Download XHS images into a folder named after the saved MD file
+    // Download extracted images into a folder named after the saved MD file
     let articleContent = parsed.content;
     const imageUrlsToDownload = parsed.imageUrls || [];
     if (imageUrlsToDownload.length > 0) {
@@ -1458,7 +1079,7 @@ async function processURLWithRetry(url, attemptIndex, messageCtx, settings) {
           }
         });
       } catch (imgErr) {
-        console.warn('[markdown-vault] Failed to download XHS images:', imgErr);
+        console.warn('[markdown-vault] Failed to download extracted images:', imgErr);
         // Keep remote URLs — content unchanged
       }
     }
@@ -1617,11 +1238,13 @@ async function processUpdate(update, token, settings) {
     update_id: update.update_id,
   };
   const maybeAckForMessage = async savedLabel => {
+    const { maybeSendSaveAck } = await import('./telegram-ack.js');
     await maybeSendSaveAck({
       token,
       messageCtx,
       sendSaveAck: send_save_ack,
       savedLabel,
+      telegramCall,
     });
   };
 

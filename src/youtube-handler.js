@@ -4,6 +4,12 @@
 
 'use strict';
 
+import { extractYouTubeVideoId } from './content-router.js';
+import {
+  sanitizeTitle, sanitizeUrlForDisplay, buildFrontmatter,
+  escapeMarkdownHeading, buildFilename, saveMarkdownFile,
+} from './shared-utils.js';
+
 const YT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
 const YT_HEADERS = {
   'User-Agent': YT_UA,
@@ -197,8 +203,7 @@ function formatDuration(seconds) {
 
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
-async function handleYouTube(url, dirHandle, settings) {
-  // extractYouTubeVideoId is defined in content-router.js
+export async function handleYouTube(url, dirHandle, settings) {
   const videoId = extractYouTubeVideoId(url);
   if (!videoId) throw new Error('Could not extract YouTube video ID from URL');
 

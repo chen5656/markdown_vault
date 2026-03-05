@@ -94,7 +94,7 @@ function extractJsonLd(html) {
  * Extract og:, twitter:, JSON-LD, and <title> metadata from raw HTML.
  * Returns { title, description, siteName, imageUrl, author, published, type }
  */
-function extractMetadata(html, url) {
+export function extractMetadata(html, url) {
   if (!html) return { title: null, description: null, siteName: null, imageUrl: null, author: null, published: null, type: null };
 
   const meta   = parseMetaTags(html);

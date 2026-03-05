@@ -8,7 +8,7 @@
  * Parse a WebVTT string to plain text.
  * Strips timecodes, tags, deduplicates consecutive identical lines.
  */
-function parseVttText(vttText) {
+export function parseVttText(vttText) {
   if (!vttText) return null;
   const lines = vttText.replace(/\r\n/g, '\n').split('\n');
   const textLines = [];
@@ -55,7 +55,7 @@ function parseVttText(vttText) {
  * Parse a JSON transcript payload to plain text.
  * Handles common formats: array of segments, {segments: [...]}, {transcript: '...'}.
  */
-function parseJsonTranscriptText(jsonText) {
+export function parseJsonTranscriptText(jsonText) {
   if (!jsonText) return null;
   try {
     const data = JSON.parse(jsonText);

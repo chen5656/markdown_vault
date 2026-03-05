@@ -4,6 +4,13 @@
 
 'use strict';
 
+import { extractMetadata } from './metadata.js';
+import {
+  sanitizeTitle, sanitizeUrlForDisplay, buildFrontmatter,
+  escapeMarkdownHeading, buildFilename, slugify, dateString,
+  saveMarkdownFile, appendToDaily, saveImageToFolder,
+} from './shared-utils.js';
+
 const PDF_MAX_SIZE   = 50  * 1024 * 1024; // 50 MB
 const MEDIA_MAX_SIZE = 200 * 1024 * 1024; // 200 MB
 const IMAGE_MAX_SIZE = 20  * 1024 * 1024; // 20 MB
@@ -42,7 +49,7 @@ async function saveBinaryToDateFolder(dirHandle, date, filename, arrayBuffer) {
 
 // ─── PDF Handler ──────────────────────────────────────────────────────────────
 
-async function handlePdf(url, dirHandle, settings, fetchResult) {
+export async function handlePdf(url, dirHandle, settings, fetchResult) {
   const { include_frontmatter = true, file_naming_pattern } = settings;
   const savedAt = new Date().toISOString();
   const date    = dateString();
@@ -93,7 +100,7 @@ async function handlePdf(url, dirHandle, settings, fetchResult) {
 
 // ─── Direct Audio / Video Handler ────────────────────────────────────────────
 
-async function handleDirectMedia(url, dirHandle, settings, fetchResult, mediaKind) {
+export async function handleDirectMedia(url, dirHandle, settings, fetchResult, mediaKind) {
   const { include_frontmatter = true, file_naming_pattern } = settings;
   const savedAt = new Date().toISOString();
   const date    = dateString();
@@ -154,7 +161,7 @@ async function handleDirectMedia(url, dirHandle, settings, fetchResult, mediaKin
 
 // ─── Image URL Handler ────────────────────────────────────────────────────────
 
-async function handleDirectImage(url, dirHandle, settings, fetchResult) {
+export async function handleDirectImage(url, dirHandle, settings, fetchResult) {
   const { binaryData, contentType } = fetchResult;
   const date    = dateString();
 

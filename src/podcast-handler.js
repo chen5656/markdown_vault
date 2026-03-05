@@ -4,6 +4,13 @@
 
 'use strict';
 
+import { extractMetadata } from './metadata.js';
+import { parseVttText, parseJsonTranscriptText } from './vtt-parser.js';
+import {
+  sanitizeTitle, sanitizeUrlForDisplay, buildFrontmatter,
+  escapeMarkdownHeading, buildFilename, saveMarkdownFile, offscreenMessage,
+} from './shared-utils.js';
+
 // Look for <link rel="alternate" type="application/rss+xml" href="..."> in page HTML
 function findRssLinkInHtml(html, pageUrl) {
   const re = /<link[^>]+type=["']application\/rss\+xml["'][^>]*href=["']([^"']+)["']/gi;
@@ -44,7 +51,7 @@ function findMatchingEpisode(items, pageUrl) {
   return items[0] || null;
 }
 
-async function handlePodcast(url, html, dirHandle, settings) {
+export async function handlePodcast(url, html, dirHandle, settings) {
   const { include_frontmatter = true, file_naming_pattern } = settings;
   const savedAt = new Date().toISOString();
 

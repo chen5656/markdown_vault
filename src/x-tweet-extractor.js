@@ -21,13 +21,20 @@
     }
   };
 
-  const normalizeImageUrl = src => {
+  const extractSrcsetUrls = srcset =>
+    (srcset || '')
+      .split(',')
+      .map(part => part.trim().split(/\s+/)[0])
+      .filter(Boolean)
+      .map(toAbs)
+      .filter(Boolean);
+
+  const isTwimgMediaUrl = src => {
     try {
       const u = new URL(src);
-      u.searchParams.set('name', 'orig');
-      return u.toString();
+      return u.hostname === 'pbs.twimg.com' && /\/(media|ext_tw_video_thumb)\//.test(u.pathname);
     } catch {
-      return src;
+      return false;
     }
   };
 
@@ -101,12 +108,15 @@
       }
     });
 
-  const images = uniq(
-    Array.from(tweetArticle.querySelectorAll('img[src]'))
-      .map(img => toAbs(img.getAttribute('src') || img.src))
-      .filter(src => /pbs\.twimg\.com\/(media|ext_tw_video_thumb)\//.test(src))
-      .map(src => normalizeImageUrl(src))
-  );
+  const imageCandidates = [];
+  for (const img of tweetArticle.querySelectorAll('img')) {
+    const src = toAbs(img.getAttribute('src') || img.src || '');
+    if (src) imageCandidates.push(src);
+
+    const srcsetUrls = extractSrcsetUrls(img.getAttribute('srcset') || img.srcset || '');
+    imageCandidates.push(...srcsetUrls);
+  }
+  const images = uniq(imageCandidates.filter(isTwimgMediaUrl));
 
   const lines = [];
 
@@ -147,5 +157,5 @@
   const preview = text ? clean(text).slice(0, 72) : '';
   const title = preview ? `${displayAuthor}: ${preview}` : `${displayAuthor} on X`;
 
-  window.__mvTweetResult = { title, content: contentMarkdown, markdownReady: true };
+  window.__mvTweetResult = { title, content: contentMarkdown, markdownReady: true, imageUrls: images };
 })();
