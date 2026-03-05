@@ -2,6 +2,7 @@
   "manifest_version": 3,
   "name": "Markdown Vault",
   "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA06OY1XCLdb2G0/mWrI18gKinbq+IJ+Opbw4lN3PjL6O6X9QquA6BzXGTJo0j24S07utHYN9/CMwb0Od0j2Nm06IgDgk0k6g7X7nWj5WiPANbn3uM7IO6X+DLJMdjQY3R4QiCTKy/xXmY8zGZ6FmrV3a2hLxbDxjcURZBjUAQcdShWYzQQeQBwaoyhbkMdMYEGw0HrAf+MOHUiw8YohtSEmXHrRhceB3JepPCyLE+cQVstzBzkn2Pxc7OWgSd98eDhpFtkWbzFxD0v4BeB56j1XpAZoohamuyPHs9+7G13/FZEuLuBU+izWkS3+kGOTYyUmw38UKToaxvPuLJgmUP+QIDAQAB",
   "description": "Send any URL to your Telegram bot → it gets saved as clean Markdown on your computer. Zero backend, your data.",
   "permissions": [
     "alarms",
