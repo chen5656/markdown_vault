@@ -1,6 +1,6 @@
 // X/Twitter Article & Note Tweet extraction via GraphQL API
 // Injected into x.com tab via chrome.scripting.executeScript({ files: [...] })
-// Communicates result back by setting window.__mvArticleResult
+// Returns result directly (last expression is resolved by executeScript)
 
 (async () => {
   try {
@@ -8,7 +8,7 @@
     const tweetIdMatch = window.location.pathname.match(/\/status(?:es)?\/(\d+)/);
     const isArticlePage = !!articleIdMatch;
     const id = (articleIdMatch && articleIdMatch[1]) || (tweetIdMatch && tweetIdMatch[1]);
-    if (!id) { window.__mvArticleResult = null; return; }
+    if (!id) return null;
 
     // X.com CSRF Cookie
     const getCookie = (name) => {
@@ -16,7 +16,7 @@
       return v ? v[2] : null;
     };
     const ct0 = getCookie('ct0');
-    if (!ct0) { window.__mvArticleResult = null; return; }
+    if (!ct0) return null;
 
     const bearer = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 
@@ -59,7 +59,7 @@
     tweetUrl.searchParams.set('fieldToggles', JSON.stringify(fieldToggles));
 
     let res = await fetch(tweetUrl.toString(), { headers: apiHeaders });
-    if (!res.ok) { window.__mvArticleResult = null; return; }
+    if (!res.ok) return null;
     let data = await res.json();
 
     let article = null;
@@ -118,7 +118,7 @@
       const noteTweet = result?.note_tweet?.note_tweet_results?.result;
       if (noteTweet) {
         const fullText = noteTweet.text || '';
-        if (!fullText) { window.__mvArticleResult = null; return; }
+        if (!fullText) return null;
 
         const user = result?.core?.user_results?.result?.legacy || {};
         const authorName = user.name || '';
@@ -177,23 +177,20 @@
         }
         header.push('');
 
-        window.__mvArticleResult = {
+        return {
           title,
           content: header.join('\n') + '\n' + content.trim(),
           markdownReady: true
         };
-        return;
       }
-      window.__mvArticleResult = null;
-      return;
+      return null;
     }
 
     // Found an Article Payload. Format natively.
     const title = typeof article.title === 'string' ? article.title.trim() : '';
     const blocks = article.content_state?.blocks || [];
     if (!blocks.length && !article.plain_text && !article.preview_text) {
-      window.__mvArticleResult = null;
-      return;
+      return null;
     }
 
     let content = '';
@@ -260,12 +257,12 @@
       content += '\n\n## Media\n\n' + [...new Set(mediaList)].map(u => `![](${u})`).join('\n');
     }
 
-    window.__mvArticleResult = {
+    return {
       title: title || 'X Article',
       content: content.trim(),
       markdownReady: true
     };
   } catch (e) {
-    window.__mvArticleResult = null;
+    return null;
   }
 })();

@@ -1,5 +1,5 @@
 // Xiaohongshu (小红书) content extraction
-// Sets window.__mvXhsResult with the extracted data
+// Returns result directly (last expression is resolved by executeScript)
 
 (() => {
   const cleanText = t => (t || '').replace(/\s+/g, ' ').trim();
@@ -29,5 +29,5 @@
     });
 
   const hasVideo = !!document.querySelector('video, .player-container, .video-player, xg-video-container');
-  window.__mvXhsResult = { title: cleanText(title), description, author, imageUrls, hasVideo };
+  return { title: cleanText(title), description, author, imageUrls, hasVideo };
 })();

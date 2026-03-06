@@ -1,6 +1,6 @@
 // X/Twitter Tweet DOM extraction
 // Injected into x.com tab via chrome.scripting.executeScript({ files: [...] })
-// Sets window.__mvTweetResult with the extracted data
+// Returns result directly (last expression is resolved by executeScript)
 
 (() => {
   const clean = value =>
@@ -33,7 +33,7 @@
 
   const articles = Array.from(document.querySelectorAll('article[data-testid="tweet"], article[role="article"]'));
   const tweetArticle = articles.find(a => a.querySelector('time')) || articles[0] || null;
-  if (!tweetArticle) { window.__mvTweetResult = null; return; }
+  if (!tweetArticle) return null;
 
   const text = Array.from(tweetArticle.querySelectorAll('div[data-testid="tweetText"]'))
     .map(el => clean(el.innerText || el.textContent))
@@ -141,11 +141,11 @@
   }
 
   const contentMarkdown = lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-  if (!contentMarkdown) { window.__mvTweetResult = null; return; }
+  if (!contentMarkdown) return null;
 
   const displayAuthor = authorHandle ? `@${authorHandle}` : authorName || 'X';
   const preview = text ? clean(text).slice(0, 72) : '';
   const title = preview ? `${displayAuthor}: ${preview}` : `${displayAuthor} on X`;
 
-  window.__mvTweetResult = { title, content: contentMarkdown, markdownReady: true };
+  return { title, content: contentMarkdown, markdownReady: true };
 })();

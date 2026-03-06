@@ -429,13 +429,9 @@ async function fetchWithBackgroundTab(url) {
     if (isTwitterStatusURL(url) || isTwitterArticleURL(url)) {
 
       // X GraphQL API Extraction for Articles — runs in page context, not SW
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['x-article-extractor.js'],
-      });
       const xArticleResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => window.__mvArticleResult,
+        files: ['x-article-extractor.js'],
       });
       if (xArticleResults && xArticleResults[0]?.result) {
         return xArticleResults[0].result;
@@ -443,13 +439,9 @@ async function fetchWithBackgroundTab(url) {
 
       // Article DOM fallback — runs in page context
       await new Promise(r => setTimeout(r, 3000));
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['x-article-dom-extractor.js'],
-      });
       const articleDomResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => window.__mvArticleDomResult,
+        files: ['x-article-dom-extractor.js'],
       });
       if (articleDomResults && articleDomResults[0]?.result) {
         return articleDomResults[0].result;
@@ -481,13 +473,9 @@ async function fetchWithBackgroundTab(url) {
       });
 
       // X Tweet DOM extraction — runs in page context
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['x-tweet-extractor.js'],
-      });
       const xResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => window.__mvTweetResult,
+        files: ['x-tweet-extractor.js'],
       });
 
       const xPost = xResults[0]?.result || null;
@@ -524,13 +512,9 @@ async function fetchWithBackgroundTab(url) {
       });
 
       // XHS content extraction — runs in page context
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['xhs-extractor.js'],
-      });
       const xhsResults = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: () => window.__mvXhsResult,
+        files: ['xhs-extractor.js'],
       });
 
       const xhsData = xhsResults[0]?.result;
