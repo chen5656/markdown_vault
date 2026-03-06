@@ -97,7 +97,7 @@ A comprehensive list of edge cases, organized by area. Every item is resolved.
 - [x] **Rapid clicking of buttons** — "Refresh Now" and "Save Settings" already `disable` the button during async operation and re-enable in `finally`. "Toggle Polling" reads state and acts idempotently. Interval buttons trigger `setStorage` which is idempotent. **Already handled; no destructive double-execution possible.**
 - [x] **Settings saved with empty bot token** — Token input only saves when non-empty (`if (tokenInput)`). This is correct — to clear the token, the user should use "Reset Setup" in the danger zone, which is the intended flow. **By design.**
 - [x] **Paste zone receives non-URL text** — Now shows "Not a valid URL" feedback with error styling, auto-clears after 2 seconds.
-- [x] **Paste zone receives multiple URLs** — Now splits pasted text by newlines and saves all valid URLs sequentially.
+- [x] **Paste zone receives multiple URLs** — Now splits pasted text by spaces, multiple spaces, newlines, commas, and tabs, then saves all valid URLs sequentially.
 - [x] **XSS in save titles** — `esc()` escapes `&`, `<`, `>`, `"`. All dynamic content inserted via `innerHTML` passes through `esc()`. `title` attributes also use `esc()`. **Adequate protection for the rendering context.**
 - [x] **`file_naming_pattern` not actually used** — `processURLWithRetry` now uses `buildFilename()` which respects the setting: `YYYY-MM-DD-slug`, `slug-YYYY-MM-DD`, or `slug` (no date).
 

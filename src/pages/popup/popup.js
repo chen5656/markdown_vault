@@ -324,6 +324,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const IDLE_LABEL = 'Paste a URL, image, or text to save it';
 
+  const normalizeURL = t => /^https?:\/\//i.test(t) ? t : (/^(?:www\.)?(?:x|twitter)\.com\//i.test(t) ? 'https://' + t : t);
+  const isHttpUrl = t => /^https?:\/\/[^\s]+$/i.test(t);
+
+  function extractUrlsFromPastedText(text) {
+    return text
+      .split(/[\s,]+/)
+      .map(token => normalizeURL(token.trim()))
+      .filter(token => isHttpUrl(token));
+  }
+
   async function handlePastedURL(url) {
     setPasteState('saving', 'Saving…');
     try {
@@ -380,8 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 2. Text: URLs or plain text
     const text = e.clipboardData.getData('text').trim();
-    const normalizeURL = t => /^https?:\/\//i.test(t) ? t : (/^(?:www\.)?(?:x|twitter)\.com\//i.test(t) ? 'https://' + t : t);
-    const urls = text.split(/[\n\r]+/).map(l => normalizeURL(l.trim())).filter(l => /^https?:\/\/[^\s]+/.test(l));
+    const urls = extractUrlsFromPastedText(text);
     if (urls.length > 0) {
       e.preventDefault();
       urls.reduce((chain, url) => chain.then(() => handlePastedURL(url)), Promise.resolve());
